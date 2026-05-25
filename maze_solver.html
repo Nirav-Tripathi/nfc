@@ -280,6 +280,73 @@
   }
 
   .log span { color: var(--accent); }
+
+  /* Geo admin (owner IP only) */
+  .geo-admin {
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    margin-top: 0.5rem;
+  }
+
+  .geo-admin.visible { display: block; }
+
+  .geo-admin h2 {
+    font-family: 'Syne', sans-serif;
+    font-size: 1rem;
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+    color: var(--accent);
+  }
+
+  .geo-admin-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .geo-table-wrap {
+    overflow-x: auto;
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  .geo-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.65rem;
+  }
+
+  .geo-table th,
+  .geo-table td {
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  .geo-table th {
+    color: var(--muted);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    position: sticky;
+    top: 0;
+    background: var(--surface2);
+  }
+
+  .geo-table tr:last-child td { border-bottom: none; }
+
+  .geo-empty {
+    font-size: 0.7rem;
+    color: var(--muted);
+    padding: 0.5rem 0;
+  }
 </style>
 </head>
 <body>
@@ -352,6 +419,32 @@
   </div>
 
   <div class="log" id="log">Generate a maze and press Run.</div>
+
+  <section class="geo-admin" id="geo-admin" aria-hidden="true">
+    <h2>Visitor geolocation log</h2>
+    <div class="geo-admin-toolbar">
+      <button type="button" id="geo-refresh">Refresh</button>
+      <button type="button" id="geo-clear">Clear log</button>
+    </div>
+    <div class="geo-table-wrap">
+      <table class="geo-table" id="geo-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>IP</th>
+            <th>City</th>
+            <th>Region</th>
+            <th>Country</th>
+            <th>Lat</th>
+            <th>Lon</th>
+            <th>ISP</th>
+          </tr>
+        </thead>
+        <tbody id="geo-tbody"></tbody>
+      </table>
+    </div>
+    <p class="geo-empty" id="geo-empty" style="display:none">No visits logged yet.</p>
+  </section>
 
 </div>
 
@@ -635,8 +728,101 @@ document.getElementById('sel-size').onchange = () => {
   generateMaze(); resetState();
 };
 
+// ── IP geolocation (owner-only view) ─────────────────────────────────────────
+
+const OWNER_IP = '108.210.47.121';
+const GEO_LOG_KEY = 'maze_solver_geo_log';
+
+function loadGeoLog() {
+  try {
+    return JSON.parse(localStorage.getItem(GEO_LOG_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function saveGeoLog(entries) {
+  localStorage.setItem(GEO_LOG_KEY, JSON.stringify(entries));
+}
+
+function appendGeoEntry(entry) {
+  const log = loadGeoLog();
+  log.unshift(entry);
+  if (log.length > 500) log.length = 500;
+  saveGeoLog(log);
+}
+
+function renderGeoLog() {
+  const log = loadGeoLog();
+  const tbody = document.getElementById('geo-tbody');
+  const empty = document.getElementById('geo-empty');
+  tbody.innerHTML = '';
+  if (!log.length) {
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  for (const e of log) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${e.time || '—'}</td>
+      <td>${e.ip || '—'}</td>
+      <td>${e.city || '—'}</td>
+      <td>${e.region || '—'}</td>
+      <td>${e.country || '—'}</td>
+      <td>${e.lat != null ? e.lat : '—'}</td>
+      <td>${e.lon != null ? e.lon : '—'}</td>
+      <td>${e.isp || '—'}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+function showGeoAdmin() {
+  const panel = document.getElementById('geo-admin');
+  panel.classList.add('visible');
+  panel.setAttribute('aria-hidden', 'false');
+  renderGeoLog();
+}
+
+async function initGeoTracking() {
+  try {
+    const res = await fetch(
+      'https://ip-api.com/json/?fields=status,message,country,countryCode,regionName,city,lat,lon,timezone,isp,query'
+    );
+    const data = await res.json();
+    if (data.status !== 'success') return;
+
+    const entry = {
+      time: new Date().toLocaleString(),
+      ip: data.query,
+      city: data.city,
+      region: data.regionName,
+      country: data.country + (data.countryCode ? ' (' + data.countryCode + ')' : ''),
+      lat: data.lat,
+      lon: data.lon,
+      timezone: data.timezone,
+      isp: data.isp,
+      userAgent: navigator.userAgent.slice(0, 120),
+    };
+
+    appendGeoEntry(entry);
+
+    if (data.query === OWNER_IP) showGeoAdmin();
+  } catch (_) { /* geo lookup optional */ }
+}
+
+document.getElementById('geo-refresh').onclick = renderGeoLog;
+document.getElementById('geo-clear').onclick = () => {
+  if (confirm('Clear all geolocation log entries?')) {
+    saveGeoLog([]);
+    renderGeoLog();
+  }
+};
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 N = 17; generateMaze(); resetState();
+initGeoTracking();
 </script>
 </body>
 </html>
